@@ -1,3 +1,4 @@
+#include <string>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <iostream>
@@ -54,13 +55,9 @@ std::string getClientsList(int num, client *clients, int own_fd){
     }
     else{
         for(int i=0;i<num-1;i++){
-            if(clients[i].fd != own_fd){
-                std::string tmp = "Client: ";
-                char tmp2 = i;
-                std::string tmp3 = " - ";
-                std::string tmp4 = clients[i].address;
-                char tmp5 = '\n';
-                text += tmp + tmp2 + tmp3 + tmp4 + tmp5;
+            if(clients[i].fd != own_fd && clients[i].status == 1){
+                std::string tmp = "Client: "+std::to_string(i)+" - "+clients[i].address+'\n';
+                text += tmp;
             }
         }
     }
@@ -69,7 +66,7 @@ std::string getClientsList(int num, client *clients, int own_fd){
 
 char* recv_or_del(pollfd *&polls, int &fds, client *&clients, int i){
     char *buf = new char[32];
-    int res = recv(polls[i].fd, buf, sizeof(buf), MSG_DONTWAIT);
+    int res = recv(polls[i].fd, buf, sizeof(buf), 0);
     if(res<0)
         kill("recv()");
     if(!res){
@@ -82,11 +79,10 @@ char* recv_or_del(pollfd *&polls, int &fds, client *&clients, int i){
         fds--;
         return 0;
     }
-    buf[res] = '\n';
     return buf;
 }
 
-int send_preserved(int fd, const char* buff, int &len){
+int send_secured(int fd, const char* buff, int len){
     int bytes_sent = 0;
     int bytes_left = len;
     int res;
@@ -95,7 +91,6 @@ int send_preserved(int fd, const char* buff, int &len){
         bytes_sent+=res;
         bytes_left-=res;
     }
-    len = bytes_sent;
     return res==-1?-1:0;
 }
 
@@ -108,13 +103,34 @@ void add_to_structs(int fd, char* ip, client *&c, pollfd *&pf, int &numfds){
     numfds++;
 }
 
+std::string print_help(){
+    return     "Welcome in easy messeneger local server!\n"
+               "To print active clients enter: show\n"
+               "To select host to send message to enter: select\n"
+               "To print that message enter: help\n";
+}
+
+int send_requested(const char *c,int fd, int num, client *clients){
+    std::string x = c;
+    if(x.substr(0,4)=="help"){
+        std::string s = print_help();
+        if(send_secured(fd, s.c_str(),sizeof(s))==-1)
+            return -1;
+    }
+    else if(x.substr(0,4)=="show"){
+        std::string s = getClientsList(num,clients,fd);   
+        if(send_secured(fd, s.c_str(),sizeof(s))==-1)
+            return -1;
+    }
+    return 0;
+}
+
 int main(){
 
-    //Initiations
+    //Initializations
     int serverSockfd, clientSockfd;
     int num_fds = 1;
     int yes=1;
-    /* char buff[32]; */
     socklen_t addr_len = INET_ADDRSTRLEN;
     int pollfd_size = 100;
     struct pollfd *pollfds = new pollfd[pollfd_size];
@@ -123,27 +139,23 @@ int main(){
 
     //setting up basic environment
     setsockopt(serverSockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-
     getListener(serverSockfd, server);
-
     pollfds[0].fd = serverSockfd;
     pollfds[0].events = POLLIN;
+
     std::cout<<"Waiting for connections..."<<std::endl;
 
     //main loop
     while(1){
 
-        //check if any host has closed the connection
-        /* del_if(pollfds, num_fds, clients); */
-
         int res = poll(pollfds, num_fds, -1);
         //check if poll is ready to return
         if(res<0)
             kill("poll()");
-        char n=0;
 
         for(int i=0;i<num_fds;i++){
             if(pollfds[i].revents & POLLIN){
+
                 if(pollfds[i].fd == serverSockfd){
                     clientSockfd = accept(serverSockfd, (sockaddr*)&client, &addr_len);
                     if(clientSockfd<0)
@@ -152,26 +164,28 @@ int main(){
                     char buf[INET_ADDRSTRLEN];
                     inet_ntop(AF_INET, getAddress((sockaddr*)&client), buf, sizeof(buf));
                     add_to_structs(clientSockfd,buf,clients,pollfds,num_fds);
-                    for(int i=0;i<num_fds-1;i++){
-                        std::cout<<clients[i].address<<' '<<clients[i].fd<<'\n';
-                    }
-                    std::string select_info = "\nSelect client you want to message to: \n";
-                    std::string clients_info =  getClientsList(num_fds,clients,clientSockfd);
-                    std::string mess = clients_info+select_info;
-                    int length = mess.length();
+
+                    std::string help = print_help();
+                    int length = help.length();
                     
-                    int res = send_preserved(clientSockfd,mess.c_str(), length);
+                    int res = send_secured(clientSockfd,help.c_str(),help.length());
 
                     info(num_fds,clients);
                 }
                 else{
                     char *buff = recv_or_del(pollfds,num_fds,clients,i);
-                    if(buff!=0)
-                        std::cout<<buff;
+                    if(buff!=0){
+                        send_requested(buff,clientSockfd,num_fds,clients);
+                        delete buff;
+                    }
+                        
                 }
             }
         }
     }
+
+    delete[] pollfds;
+    delete[] clients;
 
     return 0;
 }
