@@ -51,35 +51,37 @@ void info(int num_fds, client *clients){
 std::string getClientsList(int num, client *clients, int own_fd){
     std::string text;
     if(num<=2){
-        text = "No connections\n";
+        text="No connections!\n";
     }
     else{
         for(int i=0;i<num-1;i++){
-            if(clients[i].fd != own_fd && clients[i].status == 1){
-                std::string tmp = "Client: "+std::to_string(i)+" - "+clients[i].address+'\n';
-                text += tmp;
+            if(clients[i].status == 1){
+                std::string tmp;
+                if(clients[i].fd==own_fd)
+                    tmp = "(You) Client: "+std::to_string(i+1)+" - "+clients[i].address+'\n';
+                else
+                    tmp = "Client: "+std::to_string(i+1)+" - "+clients[i].address+'\n';
+                text+=tmp;
             }
         }
+        text+="Select: ";
     }
     return text;
 }
 
-char* recv_or_del(pollfd *&polls, int &fds, client *&clients, int i){
-    char *buf = new char[32];
-    int res = recv(polls[i].fd, buf, sizeof(buf), 0);
+int recv_or_del(pollfd *&polls, int &fds, client *&clients, int i, char* mess, int mess_len){
+    int res = recv(polls[i].fd, mess, mess_len, 0);
     if(res<0)
-        kill("recv()");
+        return -1;
     if(!res){
         std::cout<<"Host (id:"<<polls[i].fd<<") has hung up!"<<std::endl;
         close(polls[i].fd);
-        //pollfd
         polls[i].fd = polls[fds-1].fd;
-        //clients
         clients[i-1] = clients[fds-2];
         fds--;
-        return 0;
+        return 1;
     }
-    return buf;
+    return 0;
 }
 
 int send_secured(int fd, const char* buff, int len){
@@ -94,12 +96,12 @@ int send_secured(int fd, const char* buff, int len){
     return res==-1?-1:0;
 }
 
-void add_to_structs(int fd, char* ip, client *&c, pollfd *&pf, int &numfds){
+void add_to_structs(int fd, std::string ip, client *&c, pollfd *&pf, int &numfds){
     pf[numfds].fd = fd;
     pf[numfds].events = POLLIN;
     c[numfds-1].address = ip;
     c[numfds-1].fd = fd;
-    c[numfds-1].status = 0;
+    c[numfds-1].status = 1;
     numfds++;
 }
 
@@ -165,19 +167,29 @@ int main(){
                     inet_ntop(AF_INET, getAddress((sockaddr*)&client), buf, sizeof(buf));
                     add_to_structs(clientSockfd,buf,clients,pollfds,num_fds);
 
-                    std::string help = print_help();
-                    int length = help.length();
+                    std::string message = getClientsList(num_fds,clients,clientSockfd);
                     
-                    int res = send_secured(clientSockfd,help.c_str(),help.length());
+                    //Sending clients list to client
+                    int res = send_secured(clientSockfd,message.c_str(),message.length());
+                    if(res<0)
+                        kill("send_secured()");
 
+                    //display basic info about working server
                     info(num_fds,clients);
                 }
                 else{
-                    char *buff = recv_or_del(pollfds,num_fds,clients,i);
-                    if(buff!=0){
-                        send_requested(buff,clientSockfd,num_fds,clients);
-                        delete buff;
+                    //receive message or 1 if host disconnects
+                    char buff[32]; 
+                    int res = recv_or_del(pollfds,num_fds,clients,i,buff,sizeof(buff));
+                    if(!res){
+                        int receiver = (int)buff[0]-'0';
+                        std::cout<<"Number: "<<receiver<<'\n';
+                        send_secured(clients[receiver-1].fd, "test", 5);
                     }
+                    else if(res==1)
+                        std::cout<<"Host disconnected!"<<std::endl;
+                    else
+                        kill("recv()");
                         
                 }
             }
