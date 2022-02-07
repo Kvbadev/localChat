@@ -13,6 +13,7 @@ struct client{
     int fd;
     std::string address;
     bool status;
+    client *receiver;
 };
 
 int kill(std::string announcment){
@@ -55,14 +56,12 @@ std::string getClientsList(int num, client *clients, int own_fd){
     }
     else{
         for(int i=0;i<num-1;i++){
-            if(clients[i].status == 1){
-                std::string tmp;
-                if(clients[i].fd==own_fd)
-                    tmp = "(You) Client: "+std::to_string(i+1)+" - "+clients[i].address+'\n';
-                else
-                    tmp = "Client: "+std::to_string(i+1)+" - "+clients[i].address+'\n';
-                text+=tmp;
-            }
+            std::string tmp;
+            if(clients[i].fd==own_fd)
+                tmp = "(You) Client: "+std::to_string(i+1)+" - "+clients[i].address+'\n';
+            else
+                tmp = "Client: "+std::to_string(i+1)+" - "+clients[i].address+'\n';
+            text+=tmp;
         }
         text+="Select: ";
     }
@@ -101,7 +100,7 @@ void add_to_structs(int fd, std::string ip, client *&c, pollfd *&pf, int &numfds
     pf[numfds].events = POLLIN;
     c[numfds-1].address = ip;
     c[numfds-1].fd = fd;
-    c[numfds-1].status = 1;
+    c[numfds-1].status = 0;
     numfds++;
 }
 
@@ -126,6 +125,13 @@ int send_requested(const char *c,int fd, int num, client *clients){
     }
     return 0;
 }
+
+/* int fill_info(client *&cls, pollfd *&pls, int clFd){ */
+/*     const char* first = "Do You want to (1)receive or send (2)message: "; */
+
+/*     return 0; */
+/* } */
+
 
 int main(){
 
@@ -178,18 +184,26 @@ int main(){
                     info(num_fds,clients);
                 }
                 else{
-                    //receive message or 1 if host disconnects
-                    char buff[32]; 
-                    int res = recv_or_del(pollfds,num_fds,clients,i,buff,sizeof(buff));
-                    if(!res){
-                        int receiver = (int)buff[0]-'0';
-                        std::cout<<"Number: "<<receiver<<'\n';
-                        send_secured(clients[receiver-1].fd, "test", 5);
+                    if(clients[i-1].status==0){
+                        char buff[8]; 
+                        int res = recv_or_del(pollfds,num_fds,clients,i,buff,sizeof(buff));
+                        if(!res){
+                            int receiver = (int)buff[0]-'0';
+                            if(receiver!=clients[i-1].fd){
+                                clients[i-1].receiver = &clients[receiver-1];
+                                if(clients[receiver-1].receiver == &clients[i-1]){
+                                    send_secured(clients[receiver-1].fd, "test", 5);
+                                }
+                            }
+                        }
+                        else if(res==-1)
+                            kill("recv()");
                     }
-                    else if(res==1)
-                        std::cout<<"Host disconnected!"<<std::endl;
-                    else
-                        kill("recv()");
+                    else{
+                        char buff[64];
+                        int res = recv_or_del(pollfds,num_fds,clients,i,buff,sizeof(buff));
+
+                    }
                         
                 }
             }
